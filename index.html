@@ -77,10 +77,9 @@ body {
 }
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
-		<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
-		<link rel="manifest" href="index.manifest.json">
-		<link rel="preload" href="index.wasm" as="fetch" type="application/wasm" crossorigin="anonymous">
-		<link rel="preload" href="index.pck" as="fetch" crossorigin="anonymous">
+<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+<link rel="manifest" href="index.manifest.json">
+
 	</head>
 	<body>
 		<canvas id="canvas">
@@ -99,75 +98,104 @@ body {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":13132944,"index.wasm":1642043},"focusCanvas":true,"gdextensionLibs":[],"serviceWorker":"index.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":true,"fileSizes":{"index.pck":13133104,"index.wasm":1642043},"focusCanvas":true,"gdextensionLibs":[],"serviceWorker":"index.service.worker.js"};
+const GODOT_THREADS_ENABLED = true;
 const engine = new Engine(GODOT_CONFIG);
 
-function setStatusMode(mode) {
-	const status = document.getElementById('status');
+(function () {
+	const statusOverlay = document.getElementById('status');
 	const statusProgress = document.getElementById('status-progress');
-	if (mode === 'hidden') {
-		status.style.visibility = 'hidden';
-		statusProgress.style.display = 'none';
-	} else if (mode === 'progress') {
-		status.style.visibility = 'visible';
-		statusProgress.style.display = 'block';
-	} else if (mode === 'notice') {
-		status.style.visibility = 'visible';
-		statusProgress.style.display = 'none';
-	} else if (mode === 'indeterminate') {
-		status.style.visibility = 'visible';
-		statusProgress.style.display = 'none';
-		status.classList.add('indeterminate');
-	}
-}
+	const statusNotice = document.getElementById('status-notice');
 
-function setStatusNotice(text) {
-	const notice = document.getElementById('status-notice');
-	if (text) {
-		notice.style.display = 'block';
-		notice.textContent = text;
-	} else {
-		notice.style.display = 'none';
-		notice.textContent = '';
-	}
-}
+	let initializing = true;
+	let statusMode = '';
 
-const missing = Engine.getMissingFeatures();
-if (missing.length) {
-	const missingDiv = document.createElement('div');
-	missingDiv.className = 'missing-features';
-	missingDiv.innerHTML = `
-		<h1>Error</h1>
-		<p>The following features required to run Godot projects on the Web are missing:</p>
-		<ul>
-			${missing.map((id) => `<li>${Engine.getMissingFeatureName(id)}</li>`).join('')}
-		</ul>
-	`;
-	document.body.appendChild(missingDiv);
-} else {
-	engine.startGame({
-		'onProgress': function (current, total) {
-			const progressPercent = Math.round((current / total) * 100);
-			if (total > 0) {
-				const progress = document.getElementById('status-progress');
-				progress.value = current;
-				progress.max = total;
-				progress.hidden = false;
-				setStatusMode('progress');
-				if (progressPercent === 100) {
-					// Hide progress bar after loading is complete
-					setTimeout(() => {
-						setStatusMode('hidden');
-					}, 200);
-				}
-			} else {
-				setStatusMode('indeterminate');
-			}
-		},
-	}).catch((err) => {
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		const lines = text.split('\n');
+		lines.forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
 		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('An unknown error occured');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	const missing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
 	});
-}
+
+	if (missing.length !== 0) {
+		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			// There's a chance that installing the service worker would fix the issue
+			Promise.race([
+				navigator.serviceWorker.getRegistration().then((registration) => {
+					if (registration != null) {
+						return Promise.reject(new Error('Service worker already exists.'));
+					}
+					return registration;
+				}).then(() => engine.installServiceWorker()),
+				// For some reason, `getRegistration()` can stall
+				new Promise((resolve) => {
+					setTimeout(() => resolve(), 2000);
+				}),
+			]).then(() => {
+				// Reload if there was no error.
+				window.location.reload();
+			}).catch((err) => {
+				console.error('Error while registering service worker:', err);
+			});
+		} else {
+			// Display the message as usual
+			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+			displayFailureNotice(missingMsg + missing.join('\n'));
+		}
+	} else {
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+}());
 		</script>
 	</body>
 </html>
+
