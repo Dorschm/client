@@ -1,0 +1,12 @@
+{
+  "name": "godot-dev-server",
+  "version": "1.0.0",
+  "description": "Development server for Godot HTML5 export",
+  "main": "dev-server.js",
+  "scripts": {
+    "start": "node dev-server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
